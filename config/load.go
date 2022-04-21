@@ -21,7 +21,7 @@ func Load() {
 	viper.ReadInConfig()
 
 	logConfigLoader()
-	publisherKafkaConfigLoader()
+	//publisherKafkaConfigLoader()
 	serverWsConfigLoader()
 	serverGRPCConfigLoader()
 	workerConfigLoader()
