@@ -1,8 +1,10 @@
 package app
 
 import (
+	"cloud.google.com/go/pubsub"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"raccoon/collection"
@@ -12,6 +14,7 @@ import (
 	"raccoon/metrics"
 	"raccoon/publisher"
 	"raccoon/worker"
+
 	"runtime"
 	"syscall"
 	"time"
@@ -23,23 +26,23 @@ func StartServer(ctx context.Context, cancel context.CancelFunc) {
 	httpServices := services.Create(bufferChannel)
 	logger.Info("Start Server -->")
 	httpServices.Start(ctx, cancel)
-	logger.Info("Start publisher -->")
-	kPublisher, err := publisher.NewKafka()
+	logger.Info("Start pubsub publisher -->")
+	PubSubPublisher, err := publisher.NewPubSub(ctx)
 	if err != nil {
-		logger.Error("Error creating kafka producer", err)
+		logger.Error("Error connecting to Pubsub", err)
 		logger.Info("Exiting server")
 		os.Exit(0)
 	}
 
 	logger.Info("Start worker -->")
-	workerPool := worker.CreateWorkerPool(config.Worker.WorkersPoolSize, bufferChannel, config.Worker.DeliveryChannelSize, kPublisher)
+	workerPool := worker.CreateWorkerPool(config.Worker.WorkersPoolSize, bufferChannel, config.Worker.DeliveryChannelSize, PubSubPublisher)
 	workerPool.StartWorkers()
-	go kPublisher.ReportStats()
+	//go kPublisher.ReportStats()
 	go reportProcMetrics()
-	go shutDownServer(ctx, cancel, httpServices, bufferChannel, workerPool, kPublisher)
+	go shutDownServer(ctx, cancel, httpServices, bufferChannel, workerPool, PubSubPublisher)
 }
 
-func shutDownServer(ctx context.Context, cancel context.CancelFunc, httpServices services.Services, bufferChannel chan collection.CollectRequest, workerPool *worker.Pool, kp *publisher.Kafka) {
+func shutDownServer(ctx context.Context, cancel context.CancelFunc, httpServices services.Services, bufferChannel chan collection.CollectRequest, workerPool *worker.Pool, pubsub *pubsub.Client) {
 	signalChan := make(chan os.Signal)
 	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	for {
@@ -53,10 +56,14 @@ func shutDownServer(ctx context.Context, cancel context.CancelFunc, httpServices
 			if timedOut {
 				logger.Info(fmt.Sprintf("WorkerPool flush timedout %t", timedOut))
 			}
-			flushInterval := config.PublisherKafka.FlushInterval
-			logger.Info("Closing Kafka producer")
-			logger.Info(fmt.Sprintf("Wait %d ms for all messages to be delivered", flushInterval))
-			eventsInProducer := kp.Close()
+			//flushInterval := config.PublisherKafka.FlushInterval
+			logger.Info("Closing PubSub client")
+			//logger.Info(fmt.Sprintf("Wait %d ms for all messages to be delivered", flushInterval))
+			err := pubsub.Close()
+			if err!=nil{
+				log.Fatalf("Could not close pubsub Client: %v", err)
+			}
+			eventsInProducer:=0
 			/**
 			@TODO - should compute the actual no., of events per batch and therefore the total. We can do this only when we close all the active connections
 			Until then we fall back to approximation */
